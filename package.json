@@ -1,0 +1,59 @@
+{
+  "name": "@st1ggy/dev-team",
+  "version": "0.1.0",
+  "description": "Provider-based local development team orchestrator for OpenCode and ATC",
+  "license": "MIT",
+  "author": "Dmitrii Bragin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/St1ggy/dev-team.git"
+  },
+  "homepage": "https://github.com/St1ggy/dev-team#readme",
+  "bugs": {
+    "url": "https://github.com/St1ggy/dev-team/issues"
+  },
+  "type": "module",
+  "packageManager": "npm@10.9.2",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "dev-team": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/mark-executable.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "start": "tsx src/cli.ts"
+  },
+  "engines": {
+    "node": ">=22.15.1 <23"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "atc-kanban": "0.7.7",
+    "better-sqlite3": "11.10.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/better-sqlite3": "7.6.13",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "drizzle-orm": "0.45.2"
+  }
+}
