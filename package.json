@@ -1,6 +1,6 @@
 {
   "name": "@st1ggy/dev-team",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Provider-based local development team orchestrator for OpenCode and ATC",
   "license": "MIT",
   "author": "Dmitrii Bragin",

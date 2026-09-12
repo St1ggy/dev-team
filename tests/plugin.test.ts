@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -52,6 +52,24 @@ test('loads a plugin module relative to the target project', async () => {
     await writeFile(join(projectPath, 'plugin.mjs'), "export default { name: 'loaded', createProviders: () => [] };\n");
     const plugins = await loadPlugins(['./plugin.mjs'], projectPath);
     assert.equal(plugins[0]?.name, 'loaded');
+  } finally {
+    await rm(projectPath, { recursive: true, force: true });
+  }
+});
+
+test('loads an ESM-only plugin package from the target project', async () => {
+  const projectPath = await mkdtemp(join(tmpdir(), 'dev-team-plugin-'));
+  const packagePath = join(projectPath, 'node_modules', 'fixture-plugin');
+  try {
+    await mkdir(packagePath, { recursive: true });
+    await writeFile(join(packagePath, 'package.json'), JSON.stringify({
+      name: 'fixture-plugin',
+      type: 'module',
+      exports: { '.': { import: './index.js' } },
+    }));
+    await writeFile(join(packagePath, 'index.js'), "export default { name: 'esm-only', createProviders: () => [] };\n");
+    const plugins = await loadPlugins(['fixture-plugin'], projectPath);
+    assert.equal(plugins[0]?.name, 'esm-only');
   } finally {
     await rm(projectPath, { recursive: true, force: true });
   }
