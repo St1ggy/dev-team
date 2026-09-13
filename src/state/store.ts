@@ -12,6 +12,18 @@ import type {
 
 type SqlValue = string | number | null;
 
+export interface AgentRunnerRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  url: string;
+  token: string;
+  processId: number;
+  status: 'idle' | 'busy' | 'offline';
+  currentAgentId: string | null;
+  updatedAt: string;
+}
+
 export class StateStore {
   private readonly db: Database.Database;
 
@@ -57,6 +69,14 @@ export class StateStore {
         id TEXT PRIMARY KEY, task_id TEXT, role TEXT NOT NULL, atc_token TEXT,
         lock_token TEXT, process_id INTEGER, status TEXT NOT NULL, workspace_id TEXT
       );
+      CREATE TABLE IF NOT EXISTS agent_runners (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
+        url TEXT NOT NULL, token TEXT NOT NULL, process_id INTEGER NOT NULL,
+        status TEXT NOT NULL, current_agent_id TEXT, updated_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS agent_runners_project_status
+        ON agent_runners(project_id, status);
     `);
   }
 
@@ -64,7 +84,7 @@ export class StateStore {
     this.db.prepare(`
       INSERT INTO projects (id, root, provider, base_ref, project_relative_path, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(root) DO UPDATE SET provider=excluded.provider,
+      ON CONFLICT(id) DO UPDATE SET root=excluded.root, provider=excluded.provider,
         base_ref=excluded.base_ref, project_relative_path=excluded.project_relative_path
     `).run(project.id, project.root, project.provider, project.baseRef, project.projectRelativePath, new Date().toISOString());
   }
@@ -162,6 +182,63 @@ export class StateStore {
     };
   }
 
+  putRunner(runner: AgentRunnerRecord): void {
+    this.db.prepare(`
+      INSERT INTO agent_runners VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, url=excluded.url,
+        token=excluded.token, process_id=excluded.process_id, status=excluded.status,
+        current_agent_id=excluded.current_agent_id, updated_at=excluded.updated_at
+    `).run(
+      runner.id, runner.projectId, runner.name, runner.url, runner.token,
+      runner.processId, runner.status, runner.currentAgentId, runner.updatedAt,
+    );
+  }
+
+  getRunner(id: string): AgentRunnerRecord {
+    const row = this.db.prepare('SELECT * FROM agent_runners WHERE id = ?').get(id) as Record<string, SqlValue> | undefined;
+    if (!row) throw new Error(`Agent runner not found: ${id}`);
+    return mapRunner(row);
+  }
+
+  listRunners(projectId: string): AgentRunnerRecord[] {
+    const rows = this.db.prepare('SELECT * FROM agent_runners WHERE project_id = ? ORDER BY name, id').all(projectId);
+    return (rows as Array<Record<string, SqlValue>>).map(mapRunner);
+  }
+
+  reserveRunner(id: string, agentId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE agent_runners SET status = 'busy', current_agent_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'idle' AND current_agent_id IS NULL
+    `).run(agentId, new Date().toISOString(), id);
+    return result.changes === 1;
+  }
+
+  releaseRunner(id: string, agentId: string): void {
+    this.db.prepare(`
+      UPDATE agent_runners SET status = 'idle', current_agent_id = NULL, updated_at = ?
+      WHERE id = ? AND current_agent_id = ?
+    `).run(new Date().toISOString(), id, agentId);
+  }
+
+  releaseRunnerByAgent(agentId: string): void {
+    this.db.prepare(`
+      UPDATE agent_runners SET status = 'idle', current_agent_id = NULL, updated_at = ?
+      WHERE current_agent_id = ?
+    `).run(new Date().toISOString(), agentId);
+  }
+
+  touchRunner(id: string, status?: AgentRunnerRecord['status']): void {
+    if (status) {
+      this.db.prepare('UPDATE agent_runners SET status = ?, updated_at = ? WHERE id = ?').run(status, new Date().toISOString(), id);
+    } else {
+      this.db.prepare('UPDATE agent_runners SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+    }
+  }
+
+  removeRunner(id: string): void {
+    this.db.prepare('DELETE FROM agent_runners WHERE id = ?').run(id);
+  }
+
   beginOperation(id: string, kind: string, entityId: string, payload: unknown): string {
     const now = new Date().toISOString();
     this.db.prepare(`
@@ -218,5 +295,14 @@ function mapWorkspace(row: Record<string, SqlValue>): WorkspaceRecord {
     root: text(row, 'root'), projectPath: text(row, 'project_path'), ref: text(row, 'ref'),
     baseRevision: text(row, 'base_revision'), status: text(row, 'status') as WorkspaceRecord['status'],
     metadata: text(row, 'metadata'),
+  };
+}
+
+function mapRunner(row: Record<string, SqlValue>): AgentRunnerRecord {
+  return {
+    id: text(row, 'id'), projectId: text(row, 'project_id'), name: text(row, 'name'),
+    url: text(row, 'url'), token: text(row, 'token'), processId: Number(row.process_id),
+    status: text(row, 'status') as AgentRunnerRecord['status'],
+    currentAgentId: nullable(row, 'current_agent_id'), updatedAt: text(row, 'updated_at'),
   };
 }

@@ -79,7 +79,30 @@ dev-team start . --plugin @example/dev-team-provider --provider example
 dev-team start . --plugin ./dev-team-provider.mjs --provider example
 ```
 
-The command prints the dashboard URL and opens the OpenCode orchestrator. The orchestrator receives only the `dev-team` MCP gateway. It creates explicit delivery scopes, small work tasks, dependencies, and isolated workers.
+On first use, `dev-team` creates a global configuration at the platform state directory and asks for the shared ATC database, dashboard port, OpenCode executable, and optional Node.js 22 executable. Re-run that wizard or inspect the result with:
+
+```bash
+dev-team global setup
+dev-team global status
+```
+
+The first start launches one persistent ATC daemon. Later projects attach to that server and create their own ATC project instead of starting another dashboard:
+
+```bash
+dev-team atc start
+dev-team atc status
+dev-team atc stop
+```
+
+The command prints the dashboard URL and opens OpenCode with the `orchestrator` agent profile. `dev-team` automatically enables both its role-aware MCP gateway and the ATC MCP server, configured against the same shared database as the dashboard. The orchestrator creates explicit delivery scopes, small work tasks, dependencies, and isolated workers.
+
+Start a reusable manual worker slot in another terminal:
+
+```bash
+dev-team start . --mode agent --name agent-1
+```
+
+The process waits without opening OpenCode. When the orchestrator dispatches work to its runner ID, it launches `opencode run --agent agent` in the isolated task workspace and becomes idle again after the process exits. If no runner ID is selected, `worker_dispatch` keeps the original behavior and spawns a local worker automatically.
 
 ## Delivery Flow
 
@@ -104,16 +127,31 @@ An optional `dev-team.config.json` can be placed in the selected project directo
 
 ```json
 {
+  "projectId": "project_018f3d7e-...",
   "provider": "git",
   "plugins": ["@example/dev-team-provider"],
   "baseRef": "main",
   "workers": 4,
-  "port": 4000,
-  "model": "provider/model",
-  "opencodeCommand": "opencode",
-  "atcNodeCommand": "/path/to/node-22/bin/node"
+  "model": "provider/model"
 }
 ```
+
+The file is created automatically when missing. Commit it with the project: `projectId` is the durable identity, so clones, worktrees, or copied directories containing the same configuration are treated as one project. Their physical paths are recorded in the global `projects` list and share the same dev-team state.
+
+Shared settings live in the global configuration:
+
+```json
+{
+  "version": 1,
+  "atcDbPath": "/path/to/dev-team/atc/atc.sqlite",
+  "port": 4000,
+  "opencodeCommand": "opencode",
+  "atcNodeCommand": "/path/to/node-22/bin/node",
+  "projects": []
+}
+```
+
+CLI flags such as `--port`, `--opencode`, `--atc-node`, and `--atc-db` override the stored settings for one invocation.
 
 Runtime state is stored outside the project under the platform state directory. Set `DEV_TEAM_HOME` to override it.
 

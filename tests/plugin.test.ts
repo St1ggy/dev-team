@@ -28,12 +28,13 @@ test('a plugin contributes a provider and denied commands', async () => {
     createProviders: () => [provider],
   };
   const config: DevTeamConfig = {
-    projectPath,
+    projectId: 'project-plugin-test', projectPath,
     provider: 'fixture',
     workers: 1,
     port: 4000,
     opencodeCommand: 'opencode',
     stateRoot: join(projectPath, 'state'),
+    atcDbPath: join(projectPath, 'atc.sqlite'),
     plugins: [],
   };
   try {

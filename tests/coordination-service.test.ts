@@ -28,7 +28,7 @@ test('coordination flow aggregates a work task before applying its delivery', { 
   const dashboard = new AtcDashboard(join(stateRoot, 'atc.sqlite'), stateRoot, port, node);
   const url = await dashboard.start();
   const atcProject = await new AtcHttpClient(url).ensureProject(project.id, 'Flow test', 'main');
-  const service = new CoordinationService(config, project, new NoVcsProvider(), store, join(stateRoot, 'atc.sqlite'), node);
+  const service = new CoordinationService(config, project, new NoVcsProvider(), store, join(stateRoot, 'atc.sqlite'), node, url);
   await service.start(atcProject.id);
   try {
     const delivery = await service.createDelivery({ title: 'Feature delivery' });

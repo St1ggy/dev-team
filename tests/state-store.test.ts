@@ -19,6 +19,16 @@ test('StateStore persists projects, scopes, tasks, workspaces, and operation sta
     assert.equal(store.getTask('d1').kind, 'delivery');
     assert.deepEqual(store.getOperation('op1'), { status: 'provider_done', result: { url: 'https://example.test/pr/1' } });
     assert.equal(store.listRecoverableOperations().length, 1);
+    store.putRunner({
+      id: 'runner1', projectId: 'p1', name: 'manual', url: 'http://127.0.0.1:1',
+      token: 'secret', processId: process.pid, status: 'idle', currentAgentId: null,
+      updatedAt: new Date().toISOString(),
+    });
+    assert.equal(store.reserveRunner('runner1', 'agent1'), true);
+    assert.equal(store.reserveRunner('runner1', 'agent2'), false);
+    assert.equal(store.getRunner('runner1').currentAgentId, 'agent1');
+    store.releaseRunnerByAgent('agent1');
+    assert.equal(store.getRunner('runner1').status, 'idle');
     store.close();
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -8,21 +8,20 @@ import { runSetupWizard } from '../src/config/setup-wizard.js';
 test('setup wizard writes an explicit project configuration', async () => {
   const project = await mkdtemp(join(tmpdir(), 'dev-team-setup-'));
   try {
-    const answers = ['git', '', 'main', '3', '4100', 'provider/model', 'opencode-custom', '/node22'];
+    const answers = ['git', '', 'main', '3', 'provider/model'];
     await runSetupWizard(
       { projectPath: project, projectPathProvided: true },
       { ask: async () => answers.shift()!, write: () => undefined },
     );
     const config = JSON.parse(await readFile(join(project, 'dev-team.config.json'), 'utf8')) as Record<string, unknown>;
+    assert.match(String(config.projectId), /^project_/);
+    delete config.projectId;
     assert.deepEqual(config, {
       workers: 3,
-      port: 4100,
-      opencodeCommand: 'opencode-custom',
       provider: 'git',
       plugins: [],
       baseRef: 'main',
       model: 'provider/model',
-      atcNodeCommand: '/node22',
     });
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -52,7 +51,7 @@ test('setup wizard preserves fields it does not manage', async () => {
   const configPath = join(project, 'dev-team.config.json');
   await writeFile(configPath, '{"workers":2,"stateRoot":"/state","futureOption":true}\n');
   try {
-    const answers = ['y', 'git', '', 'main', '', '', '', '', ''];
+    const answers = ['y', 'git', '', 'main', '', ''];
     await runSetupWizard(
       { projectPath: project, projectPathProvided: true },
       { ask: async () => answers.shift()!, write: () => undefined },

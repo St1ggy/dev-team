@@ -30,10 +30,21 @@ export class AtcClient {
       stderr: 'pipe',
     });
     await this.client.connect(this.transport);
-    const registration = await this.call<AtcRegistration & { agentId?: string; agentToken?: string }>('register_agent', {
-      name, role, agent_type: 'opencode', workspace_mode: 'disabled',
-      ...(projectId ? { project_id: projectId } : {}),
-    });
+    let registration: AtcRegistration & { agentId?: string; agentToken?: string };
+    try {
+      registration = await this.call<AtcRegistration & { agentId?: string; agentToken?: string }>('register_agent', {
+        name, role, agent_type: 'opencode', workspace_mode: 'disabled',
+        ...(projectId ? { project_id: projectId } : {}),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('FOREIGN KEY constraint failed')) {
+        throw new DevTeamError(
+          'ATC_DB_MISMATCH',
+          `The running ATC server and MCP client use different databases. Set --atc-db to the server DB_PATH (current: ${this.dbPath}).`,
+        );
+      }
+      throw error;
+    }
     this.registration = {
       agent_id: registration.agent_id ?? registration.agentId ?? '',
       agent_token: registration.agent_token ?? registration.agentToken ?? '',

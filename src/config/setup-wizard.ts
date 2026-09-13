@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { access, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -9,14 +10,12 @@ export interface SetupDefaults {
   provider?: ProviderKind;
   baseRef?: string;
   workers?: number;
-  port?: number;
   model?: string;
-  opencodeCommand?: string;
-  atcNodeCommand?: string;
   plugins?: string[];
 }
 
 interface SetupConfig {
+  projectId?: string;
   provider?: ProviderKind;
   baseRef?: string;
   workers?: number;
@@ -24,6 +23,7 @@ interface SetupConfig {
   model?: string;
   opencodeCommand?: string;
   atcNodeCommand?: string;
+  atcDbPath?: string;
   stateRoot?: string;
   plugins?: string[];
   [key: string]: unknown;
@@ -60,17 +60,13 @@ export async function runSetupWizard(defaults: SetupDefaults, io?: WizardIo): Pr
     const plugins = await askList(ask, 'Plugins', defaults.plugins ?? existing?.plugins ?? []);
     const baseRef = await askOptional(ask, 'Base ref', defaults.baseRef ?? existing?.baseRef, 'auto-detect');
     const workers = await askInteger(ask, 'Worker count', defaults.workers ?? existing?.workers ?? 4, 1, 64);
-    const port = await askInteger(ask, 'ATC dashboard port', defaults.port ?? existing?.port ?? 4000, 1, 65_535);
     const model = await askOptional(ask, 'OpenCode model', defaults.model ?? existing?.model, 'default');
-    const opencodeCommand = await askValue(ask, 'OpenCode executable', defaults.opencodeCommand ?? existing?.opencodeCommand ?? 'opencode');
-    const atcNodeCommand = await askOptional(ask, 'Node.js 22 executable for ATC', defaults.atcNodeCommand ?? existing?.atcNodeCommand, 'auto-detect');
 
-    const config: SetupConfig = { ...existing, workers, port, opencodeCommand };
+    const config: SetupConfig = { ...existing, projectId: existing?.projectId ?? `project_${randomUUID()}`, workers };
     setOptional(config, 'provider', provider);
     config.plugins = plugins;
     setOptional(config, 'baseRef', baseRef);
     setOptional(config, 'model', model);
-    setOptional(config, 'atcNodeCommand', atcNodeCommand);
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
     write(`Wrote ${configPath}\nRun: dev-team doctor ${JSON.stringify(projectPath)}\n`);
     return configPath;
@@ -98,10 +94,6 @@ async function askInteger(ask: Ask, label: string, current: number, minimum: num
     const value = answer ? Number(answer) : current;
     if (Number.isInteger(value) && value >= minimum && value <= maximum) return value;
   }
-}
-
-async function askValue(ask: Ask, label: string, current: string): Promise<string> {
-  return (await ask(`${label} [${current}]: `)).trim() || current;
 }
 
 async function askOptional(ask: Ask, label: string, current: string | undefined, emptyLabel: string): Promise<string | undefined> {

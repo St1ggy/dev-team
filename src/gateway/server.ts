@@ -9,7 +9,7 @@ export async function runGateway(): Promise<void> {
   const role = requiredEnv('DEV_TEAM_ROLE') as 'main' | 'worker';
   const agentId = requiredEnv('DEV_TEAM_AGENT_ID');
   if (role !== 'main' && role !== 'worker') throw new Error(`Invalid gateway role: ${role}`);
-  const rpc = new RpcClient(url, token, role, agentId);
+  const rpc = new RpcClient(url, token);
   const server = new McpServer({ name: 'dev-team', version: '0.1.0' });
 
   if (role === 'main') registerMainTools(server, rpc);
@@ -40,9 +40,12 @@ function registerMainTools(server: McpServer, rpc: RpcClient): void {
     timeout_seconds: z.number().int().min(1).max(3600).default(600),
   }, ({ task_ids, statuses, timeout_seconds }) => result(rpc.call('wait_tasks', { taskIds: task_ids, statuses, timeoutSeconds: timeout_seconds })));
 
+  server.tool('worker_list', 'List manually started agent daemons for this project.', {}, () => result(rpc.call('list_runners')));
+
   server.tool('worker_dispatch', 'Claim a ready task and launch an isolated OpenCode worker.', {
     task_id: z.string(),
-  }, ({ task_id }) => result(rpc.call('dispatch', { taskId: task_id })));
+    runner_id: z.string().optional(),
+  }, ({ task_id, runner_id }) => result(rpc.call('dispatch', { taskId: task_id, runnerId: runner_id })));
 
   server.tool('task_review', 'Approve or reject a task in Review. Approval integrates work or creates the delivery PR.', {
     task_id: z.string(), verdict: z.enum(['approve', 'reject']), comment: z.string().optional(),

@@ -6,6 +6,7 @@ import type { ProjectRecord, ScopeRecord, TaskKind, TaskRecord, WorkspaceRecord 
 import type { VcsProvider } from '../providers/provider.js';
 import { StateStore } from '../state/store.js';
 import { AtcClient } from './atc-client.js';
+import { AtcHttpClient } from './atc-http.js';
 
 interface ActiveAgent {
   id: string;
@@ -24,7 +25,9 @@ export interface WorkerLaunch {
 
 export class CoordinationService {
   private readonly mainAtc: AtcClient;
+  private readonly atcHttp: AtcHttpClient;
   private readonly agents = new Map<string, ActiveAgent>();
+  private readonly preparingTasks = new Set<string>();
   private readonly scopeLocks = new Map<string, Promise<void>>();
   private heartbeat: NodeJS.Timeout | null = null;
   private atcProjectId: string | null = null;
@@ -34,27 +37,30 @@ export class CoordinationService {
     readonly project: ProjectRecord,
     private readonly provider: VcsProvider,
     private readonly store: StateStore,
-    atcDbPath: string,
+    private readonly atcDbPath: string,
     private readonly atcNodeCommand: string,
+    atcUrl?: string,
   ) {
     this.mainAtc = new AtcClient(atcDbPath, project.root, atcNodeCommand);
+    this.atcHttp = new AtcHttpClient(atcUrl ?? `http://127.0.0.1:${config.port}`);
   }
 
   async start(atcProjectId: string): Promise<void> {
     this.atcProjectId = atcProjectId;
-    await this.mainAtc.connect('dev-team-orchestrator', 'main', atcProjectId);
+    await this.mainAtc.connect(`dev-team-orchestrator-${this.project.id.slice(-8)}`, 'main', atcProjectId);
     this.heartbeat = setInterval(() => void this.renewAgents(), 10 * 60 * 1000);
   }
 
   async stop(): Promise<void> {
     if (this.heartbeat) clearInterval(this.heartbeat);
-    await Promise.allSettled([...this.agents.values()].map((agent) => agent.client.close()));
+    await Promise.allSettled([...this.agents.keys()].map((agentId) => this.handleWorkerExit(agentId)));
     await this.mainAtc.close();
   }
 
   async createDelivery(input: { title: string; description?: string; priority?: string }): Promise<{ scope: ScopeRecord; task: Record<string, unknown> }> {
     const scopeId = newId('scope');
-    const task = await this.mainAtc.createTask({
+    if (!this.atcProjectId) throw new DevTeamError('ATC_NOT_STARTED', 'Coordination service has no ATC project');
+    const task = await this.atcHttp.createTask(this.atcProjectId, {
       title: input.title, labels: ['kind:delivery', `scope:${scopeId}`], requiresReview: true,
       ...(input.description ? { description: input.description } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
@@ -76,7 +82,9 @@ export class CoordinationService {
 
   async createWork(input: { scopeId: string; title: string; description?: string; priority?: string; dependsOn?: string[] }): Promise<Record<string, unknown>> {
     this.store.getScope(input.scopeId);
-    const task = await this.mainAtc.createTask({
+    for (const dependency of input.dependsOn ?? []) this.store.getTask(dependency);
+    if (!this.atcProjectId) throw new DevTeamError('ATC_NOT_STARTED', 'Coordination service has no ATC project');
+    const task = await this.atcHttp.createTask(this.atcProjectId, {
       title: input.title, labels: ['kind:work', `scope:${input.scopeId}`], requiresReview: true,
       ...(input.description ? { description: input.description } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
@@ -89,14 +97,17 @@ export class CoordinationService {
 
   async setDependencies(taskId: string, dependsOn: string[]): Promise<void> {
     this.store.getTask(taskId);
+    for (const dependency of dependsOn) this.store.getTask(dependency);
     await this.mainAtc.setDependencies(taskId, dependsOn);
   }
 
-  listTasks(): Promise<Record<string, unknown>[]> {
-    return this.mainAtc.listTasks();
+  async listTasks(): Promise<Record<string, unknown>[]> {
+    if (!this.atcProjectId) throw new DevTeamError('ATC_NOT_STARTED', 'Coordination service has no ATC project');
+    return this.atcHttp.listTasks(this.atcProjectId);
   }
 
   async waitForTasks(taskIds: string[], statuses: string[], timeoutSeconds: number): Promise<Record<string, unknown>[]> {
+    for (const taskId of taskIds) this.store.getTask(taskId);
     const deadline = Date.now() + Math.min(Math.max(timeoutSeconds, 1), 3600) * 1000;
     while (true) {
       const tasks = await Promise.all(taskIds.map((taskId) => this.mainAtc.getTask(taskId)));
@@ -107,6 +118,7 @@ export class CoordinationService {
   }
 
   getTask(taskId: string): Promise<Record<string, unknown>> {
+    this.store.getTask(taskId);
     return this.mainAtc.getTask(taskId);
   }
 
@@ -117,9 +129,21 @@ export class CoordinationService {
   }
 
   async dispatch(taskId: string): Promise<WorkerLaunch> {
-    if (this.agents.size >= this.config.workers) {
+    if (this.agents.size + this.preparingTasks.size >= this.config.workers) {
       throw new DevTeamError('WORKER_LIMIT', `Worker limit reached (${this.config.workers})`);
     }
+    if (this.preparingTasks.has(taskId) || [...this.agents.values()].some((agent) => agent.taskId === taskId)) {
+      throw new DevTeamError('TASK_ALREADY_DISPATCHED', `Task is already dispatched: ${taskId}`);
+    }
+    this.preparingTasks.add(taskId);
+    try {
+      return await this.prepareDispatch(taskId);
+    } finally {
+      this.preparingTasks.delete(taskId);
+    }
+  }
+
+  private async prepareDispatch(taskId: string): Promise<WorkerLaunch> {
     const task = this.store.getTask(taskId);
     const scope = this.store.getScope(task.scopeId);
     let workspace = task.workspaceId ? this.store.getWorkspace(task.workspaceId) : null;
@@ -135,7 +159,7 @@ export class CoordinationService {
     }
 
     const agentId = newId('agent');
-    const client = new AtcClient(join(this.config.stateRoot, 'atc.sqlite'), workspace.projectPath, this.atcNodeCommand);
+    const client = new AtcClient(this.atcDbPath, workspace.projectPath, this.atcNodeCommand);
     if (!this.atcProjectId) throw new DevTeamError('ATC_NOT_STARTED', 'Coordination service has no ATC project');
     await client.connect(`worker-${agentId.slice(-8)}`, 'worker', this.atcProjectId);
     let claim: Awaited<ReturnType<AtcClient['claimTask']>>;
@@ -158,6 +182,7 @@ export class CoordinationService {
   }
 
   attachProcess(agentId: string, pid: number): void {
+    if (!this.agents.has(agentId)) return;
     const agent = this.store.getAgent(agentId);
     this.store.putAgent({ ...agent, processId: pid });
   }

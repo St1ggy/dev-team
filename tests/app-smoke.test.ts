@@ -6,22 +6,26 @@ import { createServer } from 'node:net';
 import test from 'node:test';
 import { start } from '../src/app.js';
 import { loadConfig } from '../src/config/config.js';
+import { AtcDashboard } from '../src/runtime/atc-dashboard.js';
 
 test('one-command runtime starts ATC and invokes the OpenCode orchestrator', { timeout: 30_000 }, async () => {
   const temp = await mkdtemp(join(tmpdir(), 'dev-team-app-'));
   const project = join(temp, 'project');
   const fakeOpenCode = join(temp, 'fake-opencode');
+  const port = await freePort();
   await mkdir(project);
   await writeFile(fakeOpenCode, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.30; fi\nexit 0\n');
   await chmod(fakeOpenCode, 0o755);
   try {
     const config = await loadConfig(project, {
-      provider: 'novcs', stateRoot: join(temp, 'state'), port: await freePort(),
+      provider: 'novcs', stateRoot: join(temp, 'state'), port,
+      atcDbPath: join(temp, 'atc.sqlite'),
       opencodeCommand: fakeOpenCode,
     });
     await start(config);
     assert.ok(true);
   } finally {
+    await AtcDashboard.shutdown(port).catch(() => undefined);
     await rm(temp, { recursive: true, force: true });
   }
 });
